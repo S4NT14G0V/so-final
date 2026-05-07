@@ -1,0 +1,28 @@
+[package]
+name    = "hash_benchmark"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "hash_benchmark"
+path = "src/main.rs"
+
+[dependencies]
+# Framework HTTP async — equivalente a FastAPI/libmicrohttpd
+axum       = "0.7"
+# Runtime async — equivalente al event loop de asyncio
+tokio      = { version = "1", features = ["full"] }
+# SHA-256 puro Rust — equivalente a OpenSSL SHA256
+sha2       = "0.10"
+digest     = "0.10"
+# Serialización JSON — equivalente a cJSON / Pydantic
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Logging mínimo
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 3
+lto       = true
+codegen-units = 1
