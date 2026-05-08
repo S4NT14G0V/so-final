@@ -64,7 +64,7 @@ go build -o server_go main.go && ./server_go -port 8001
 ### C
 ```bash
 cd c
-gcc -O2 -o hash_c main.c
+gcc -O2 -o hash_c main.c -lmicrohttpd -lssl -lcrypto -lpthread -lcjson
 ./hash_c
 ```
 
@@ -75,22 +75,17 @@ cargo build --release
 ./target/release/hash_benchmark
 ```
 
----
-
+**Nota:** Durante la compilación o ejecución de los binarios, es posible que aparezcan *warnings* o advertencias relacionadas con la arquitectura o librerías específicas. Estos pueden ser ignorados
 ## Ejecutar Benchmarks
 Utiliza los scripts de k6 proporcionados para medir el rendimiento de cada lenguaje:
 
+---
+
 ```bash
+cd benchmark
 k6 run -e LANG=python benchmark.js
 k6 run -e LANG=go benchmark.js
 k6 run -e LANG=c benchmark.js
 k6 run -e LANG=rust benchmark.js
 ```
 
----
-
-## Notas de Implementación
-* **C:** Implementado utilizando sockets nativos para máxima eficiencia.
-* **Python:** FastAPI con gestión de Workers para simular concurrencia.
-* **Go:** Utiliza `goroutines` para el manejo de carga concurrente.
-* **Rust:** Implementado con `Tokio` para un modelo async de alto rendimiento.
