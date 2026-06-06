@@ -37,7 +37,7 @@ import (
 // hashRequest es el cuerpo de entrada — idéntico al HashRequest de Pydantic.
 type hashRequest struct {
 	Text       string `json:"text"`
-	Iterations int    `json:"iterations"`
+	Iterations *int   `json:"iterations,omitempty"`
 }
 
 // hashResponse es la respuesta — idéntica a la del endpoint Python.
@@ -215,13 +215,16 @@ func parseHashRequest(w http.ResponseWriter, r *http.Request) (hashRequest, bool
 		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{"text must not be empty"})
 		return hashRequest{}, false
 	}
-	if req.Iterations == 0 {
-		req.Iterations = 10_000 // default igual que en Python
+
+	iterations := 10_000 // default igual que en Python
+	if req.Iterations != nil {
+		iterations = *req.Iterations
 	}
-	if req.Iterations < 1 || req.Iterations > 500_000 {
+	if iterations < 1 || iterations > 500_000 {
 		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{"iterations must be between 1 and 500000"})
 		return hashRequest{}, false
 	}
+	req.Iterations = &iterations
 
 	return req, true
 }
@@ -237,12 +240,12 @@ func hashSeqHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Lock global: serializa el computo igual que asyncio.Lock en Python.
 	hashMutex.Lock()
-	result := computeHash(req.Text, req.Iterations)
+	result := computeHash(req.Text, *req.Iterations)
 	hashMutex.Unlock()
 
 	writeJSON(w, http.StatusOK, hashResponse{
 		Mode:       "sequential",
-		Iterations: req.Iterations,
+		Iterations: *req.Iterations,
 		Hash:       result,
 	})
 }
@@ -257,11 +260,11 @@ func hashConcHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := computeHash(req.Text, req.Iterations)
+	result := computeHash(req.Text, *req.Iterations)
 
 	writeJSON(w, http.StatusOK, hashResponse{
 		Mode:       "concurrent",
-		Iterations: req.Iterations,
+		Iterations: *req.Iterations,
 		Hash:       result,
 	})
 }

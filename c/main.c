@@ -254,7 +254,6 @@ static int parse_body(const char *body, cJSON **root_out,
  
     if (!cJSON_IsString(j_text) || !j_text->valuestring || j_text->valuestring[0] == '\0') {
         snprintf(err_msg, err_sz, "Campo 'text' requerido y no vacío");
-        cJSON_Delete(*root_out);
         return -1;
     }
  
@@ -262,14 +261,12 @@ static int parse_body(const char *body, cJSON **root_out,
     if (j_iter) {
         if (!cJSON_IsNumber(j_iter)) {
             snprintf(err_msg, err_sz, "Campo 'iterations' debe ser número");
-            cJSON_Delete(*root_out);
             return -1;
         }
         iters = (int)j_iter->valuedouble;
         if (iters < MIN_ITER || iters > MAX_ITER) {
             snprintf(err_msg, err_sz,
                      "iterations debe estar entre %d y %d", MIN_ITER, MAX_ITER);
-            cJSON_Delete(*root_out);
             return -1;
         }
     }

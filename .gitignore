@@ -4,3 +4,7 @@ rust/Cargo.lock
 c/hash_c
 benchmark/__pycache__
 RESUMEN.md
+
+benchmark/lib
+benchmark/include
+benchmark/.tmp

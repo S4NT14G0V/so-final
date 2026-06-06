@@ -12,8 +12,8 @@
 # =============================================================================
 
 experiment:
-  replicas: 3
-  seed: 42
+  replicas: 1
+  seed: 26
   k6_vus: 10
   k6_duration: "30s"
 
@@ -22,7 +22,7 @@ languages:
     port: 8000
     build: null
     start_cmd:
-      - uvicorn
+      - "./.venv/bin/uvicorn"
       - "main:app"
       - "--host"
       - "0.0.0.0"
@@ -51,6 +51,9 @@ languages:
       - "-o"
       - hash_c
       - main.c
+      - "-I/home/kali/so-final/benchmark/include"
+      - "-I/home/kali/so-final/benchmark/include/x86_64-linux-gnu"
+      - "-L/home/kali/so-final/benchmark/lib"
       - "-lmicrohttpd"
       - "-lssl"
       - "-lcrypto"

@@ -325,9 +325,10 @@ async fn stringproc_sequential(
         );
     }
     let text = body.text.clone();
+    let text2 = text.clone();
     let _guard = state.stringproc_lock.lock().await;
     let (rev, up, vc) =
-        tokio::task::spawn_blocking(move || compute_string_proc(&text))
+        tokio::task::spawn_blocking(move || compute_string_proc(&text2))
             .await
             .expect("spawn_blocking fallo");
     (
@@ -352,8 +353,9 @@ async fn stringproc_concurrent(
         );
     }
     let text = body.text.clone();
+    let text2 = text.clone();
     let (rev, up, vc) =
-        tokio::task::spawn_blocking(move || compute_string_proc(&text))
+        tokio::task::spawn_blocking(move || compute_string_proc(&text2))
             .await
             .expect("spawn_blocking fallo");
     (
