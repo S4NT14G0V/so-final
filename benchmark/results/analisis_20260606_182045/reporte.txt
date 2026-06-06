@@ -1,0 +1,68 @@
+======================================================================
+  REPORTE DE ANALISIS ESTADISTICO - BENCHMARK MULTI-LENGUAJE
+======================================================================
+
+Fecha: 2026-06-06 18:20:49
+Metrica analizada: avg_ms
+Observaciones: 32
+
+Lenguajes: c, go, python, rust
+Algoritmos: hash, jsonproc, prime, stringproc
+Variantes: concurrente, secuencial
+
+----------------------------------------------------------------------
+  ESTADISTICAS DESCRIPTIVAS
+----------------------------------------------------------------------
+                                 count     mean  std      min      25%      50%      75%      max
+language algorithm  variante                                                                     
+c        hash       concurrente    1.0   208.47  NaN   208.47   208.47   208.47   208.47   208.47
+                    secuencial     1.0   341.18  NaN   341.18   341.18   341.18   341.18   341.18
+         jsonproc   concurrente    1.0   673.30  NaN   673.30   673.30   673.30   673.30   673.30
+                    secuencial     1.0   789.26  NaN   789.26   789.26   789.26   789.26   789.26
+         prime      concurrente    1.0   593.12  NaN   593.12   593.12   593.12   593.12   593.12
+                    secuencial     1.0   751.02  NaN   751.02   751.02   751.02   751.02   751.02
+         stringproc concurrente    1.0     9.01  NaN     9.01     9.01     9.01     9.01     9.01
+                    secuencial     1.0     2.93  NaN     2.93     2.93     2.93     2.93     2.93
+go       hash       concurrente    1.0   198.16  NaN   198.16   198.16   198.16   198.16   198.16
+                    secuencial     1.0   308.45  NaN   308.45   308.45   308.45   308.45   308.45
+         jsonproc   concurrente    1.0  1369.73  NaN  1369.73  1369.73  1369.73  1369.73  1369.73
+                    secuencial     1.0  1649.87  NaN  1649.87  1649.87  1649.87  1649.87  1649.87
+         prime      concurrente    1.0   633.50  NaN   633.50   633.50   633.50   633.50   633.50
+                    secuencial     1.0   826.76  NaN   826.76   826.76   826.76   826.76   826.76
+         stringproc concurrente    1.0     2.38  NaN     2.38     2.38     2.38     2.38     2.38
+                    secuencial     1.0     2.36  NaN     2.36     2.36     2.36     2.36     2.36
+python   hash       concurrente    1.0   454.25  NaN   454.25   454.25   454.25   454.25   454.25
+                    secuencial     1.0   460.75  NaN   460.75   460.75   460.75   460.75   460.75
+         jsonproc   concurrente    1.0  1382.71  NaN  1382.71  1382.71  1382.71  1382.71  1382.71
+                    secuencial     1.0  1004.03  NaN  1004.03  1004.03  1004.03  1004.03  1004.03
+         prime      concurrente    1.0  1058.55  NaN  1058.55  1058.55  1058.55  1058.55  1058.55
+                    secuencial     1.0  1138.83  NaN  1138.83  1138.83  1138.83  1138.83  1138.83
+         stringproc concurrente    1.0    14.28  NaN    14.28    14.28    14.28    14.28    14.28
+                    secuencial     1.0     7.44  NaN     7.44     7.44     7.44     7.44     7.44
+rust     hash       concurrente    1.0    25.29  NaN    25.29    25.29    25.29    25.29    25.29
+                    secuencial     1.0    56.78  NaN    56.78    56.78    56.78    56.78    56.78
+         jsonproc   concurrente    1.0   755.22  NaN   755.22   755.22   755.22   755.22   755.22
+                    secuencial     1.0  1116.60  NaN  1116.60  1116.60  1116.60  1116.60  1116.60
+         prime      concurrente    1.0   552.18  NaN   552.18   552.18   552.18   552.18   552.18
+                    secuencial     1.0   721.70  NaN   721.70   721.70   721.70   721.70   721.70
+         stringproc concurrente    1.0     2.03  NaN     2.03     2.03     2.03     2.03     2.03
+                    secuencial     1.0     5.32  NaN     5.32     5.32     5.32     5.32     5.32
+
+----------------------------------------------------------------------
+  ANOVA DE 3 FACTORES
+----------------------------------------------------------------------
+                    sum_sq    df          F        PR(>F)
+C(language)   4.960610e+05   3.0   4.796353  9.329541e-03
+C(variante)   4.891410e+04   1.0   1.418833  2.452429e-01
+C(algorithm)  5.845951e+06   3.0  56.523789  5.003743e-11
+Residual      8.273969e+05  24.0        NaN           NaN
+
+R-cuadrado del modelo completo: 0.8854
+R-cuadrado ajustado: 0.8519
+
+----------------------------------------------------------------------
+  CONCLUSIONES PRELIMINARES
+----------------------------------------------------------------------
+Factores significativos (p<0.05):
+  - C(language)  (p=0.009330) **
+  - C(algorithm)  (p=0.000000) ***

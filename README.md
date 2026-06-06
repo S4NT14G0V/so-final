@@ -18,12 +18,13 @@ El flujo de procesamiento para cada request es:
 `k6 (Carga)` → `Backend HTTP` → `Procesamiento del algoritmo` → `Respuesta JSON`
 
 ### Algoritmos implementados
-| Algoritmo | Tipo de carga | Descripcion |
-|---|---|---|
-| `hash` | CPU | SHA-256 iterativo (KDF-like) |
-| `stringproc` | Trivial | Transformacion de strings (mide overhead del framework) |
-| `prime` | CPU pesado | Criba de Eratostenes |
-| `jsonproc` | I/O simulado | Construccion/serializacion/parseo de JSON masivo |
+
+| Algoritmo | Tipo | Descripcion | Implicacion en el sistema |
+|---|---|---|---|
+| `hash` | CPU puro | SHA-256 iterativo 100k veces (KDF-like). Bucle cerrado sin asignaciones significativas. | **CPU intensivo**. Bajo uso de RAM (buffer de 32 bytes). Sin E/S ni syscalls relevantes. El bottleneck es exclusivamente la velocidad del procesador y la eficiencia del compilador/runtime. |
+| `stringproc` | Trivial / Overhead | Reversa, uppercase y conteo de vocales sobre un texto corto (~43 chars). | **Casi nulo**. Microsegundos de CPU, sin RAM relevante. Mide exclusivamente el overhead del framework HTTP (routing, parsing JSON, serializacion de respuesta). Sirve como linea base ("control") del experimento. |
+| `prime` | CPU pesado | Criba de Eratostenes hasta 10M. Array de booleanos, loops anidados, escritura secuencial en memoria. | **CPU intensivo + uso moderado de RAM**. ~10 MB de heap (sieve). Estrés caché de datos (L1/L2) por acceso secuencial. Penaliza lenguajes con bounds-checking o GC que recorren el array repetidamente. Revela diferencias en optimizacion de bucles. |
+| `jsonproc` | I/O simulado + memoria | Construye un array de 5000 objetos JSON con 10 niveles de anidamiento, serializa, parsea y hashea. | **CPU + RAM + serializador**. Alta presion en el asignador de memoria (malloc/GC). Evalua el rendimiento de la libreria JSON nativa de cada lenguaje. Ejercita reflection/derive macros y manejo de estructuras arboreas en heap. |
 
 Cada algoritmo tiene dos modos: `-seq` (secuencial, con lock) y `-conc` (concurrente, sin lock).
 
