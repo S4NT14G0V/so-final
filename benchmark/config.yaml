@@ -1,0 +1,102 @@
+# =============================================================================
+# Configuracion del experimento de benchmarking
+# =============================================================================
+# Cada algoritmo define su propio payload (1 dataset por algoritmo).
+# Los datasets de distintos algoritmos no son comparables entre si.
+# El ANOVA se realiza por separado para cada algoritmo.
+#
+# Factores del disenio:
+#   - language (python, go, c, rust)
+#   - scenario (seq, conc)
+#   - replica (anidado)
+# =============================================================================
+
+experiment:
+  replicas: 3
+  seed: 42
+  k6_vus: 10
+  k6_duration: "30s"
+
+languages:
+  - name: python
+    port: 8000
+    build: null
+    start_cmd:
+      - uvicorn
+      - "main:app"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--workers"
+      - "1"
+    workdir: python
+
+  - name: go
+    port: 8001
+    build: null
+    start_cmd:
+      - go
+      - run
+      - main.go
+      - "-port"
+      - "8001"
+    workdir: go
+
+  - name: c
+    port: 8004
+    build:
+      - gcc
+      - "-O2"
+      - "-o"
+      - hash_c
+      - main.c
+      - "-lmicrohttpd"
+      - "-lssl"
+      - "-lcrypto"
+      - "-lpthread"
+      - "-lcjson"
+    start_cmd:
+      - ./hash_c
+    workdir: c
+
+  - name: rust
+    port: 8003
+    build:
+      - cargo
+      - build
+      - "--release"
+    start_cmd:
+      - ./target/release/hash_benchmark
+    workdir: rust
+
+algorithms:
+  - name: hash
+    endpoints:
+      seq: /hash-seq
+      conc: /hash-conc
+    payload:
+      text: "benchmark-hashing-so-udea-2025"
+      iterations: 100000
+
+  - name: stringproc
+    endpoints:
+      seq: /stringproc-seq
+      conc: /stringproc-conc
+    payload:
+      text: "The quick brown fox jumps over the lazy dog"
+
+  - name: prime
+    endpoints:
+      seq: /prime-seq
+      conc: /prime-conc
+    payload:
+      limit: 10000000
+
+  - name: jsonproc
+    endpoints:
+      seq: /jsonproc-seq
+      conc: /jsonproc-conc
+    payload:
+      count: 5000
+      nested: 10

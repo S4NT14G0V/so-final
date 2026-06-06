@@ -2,3 +2,5 @@ python/__pycache__
 rust/target
 rust/Cargo.lock
 c/hash_c
+benchmark/__pycache__
+RESUMEN.md

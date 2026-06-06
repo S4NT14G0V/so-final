@@ -15,21 +15,40 @@ Analizar el impacto de la concurrencia y el tipo de lenguaje (interpretado vs co
 
 ## Arquitectura
 El flujo de procesamiento para cada request es:
-`k6 (Carga)` → `Backend HTTP` → `Procesamiento CPU-heavy (SHA256 iterativo)` → `Respuesta JSON`
+`k6 (Carga)` → `Backend HTTP` → `Procesamiento del algoritmo` → `Respuesta JSON`
+
+### Algoritmos implementados
+| Algoritmo | Tipo de carga | Descripcion |
+|---|---|---|
+| `hash` | CPU | SHA-256 iterativo (KDF-like) |
+| `stringproc` | Trivial | Transformacion de strings (mide overhead del framework) |
+| `prime` | CPU pesado | Criba de Eratostenes |
+| `jsonproc` | I/O simulado | Construccion/serializacion/parseo de JSON masivo |
+
+Cada algoritmo tiene dos modos: `-seq` (secuencial, con lock) y `-conc` (concurrente, sin lock).
 
 ### Endpoints
-| Endpoint | Descripción |
+| Endpoint | Descripcion |
 | :--- | :--- |
-| `/hash-seq` | Procesamiento secuencial (bloqueante) |
-| `/hash-conc` | Procesamiento concurrente (no bloqueante) |
+| `/hash-seq` / `/hash-conc` | Hashing SHA-256 iterativo |
+| `/stringproc-seq` / `/stringproc-conc` | Transformacion de strings |
+| `/prime-seq` / `/prime-conc` | Criba de Eratostenes |
+| `/jsonproc-seq` / `/jsonproc-conc` | Procesamiento JSON masivo |
 | `/health` | Health check del servidor |
 
-**Request:**
+**Requests de ejemplo:**
 ```json
-{
-  "text": "benchmark",
-  "iterations": 100000
-}
+// hash
+{ "text": "benchmark", "iterations": 100000 }
+
+// stringproc
+{ "text": "The quick brown fox jumps over the lazy dog" }
+
+// prime
+{ "limit": 10000000 }
+
+// jsonproc
+{ "count": 5000, "nested": 10 }
 ```
 
 ---
@@ -49,7 +68,7 @@ El flujo de procesamiento para cada request es:
 ```bash
 cd python
 pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 ### Go
@@ -76,16 +95,57 @@ cargo build --release
 ```
 
 **Nota:** Durante la compilación o ejecución de los binarios, es posible que aparezcan *warnings* o advertencias relacionadas con la arquitectura o librerías específicas. Estos pueden ser ignorados
-## Ejecutar Benchmarks
-Utiliza los scripts de k6 proporcionados para medir el rendimiento de cada lenguaje:
 
 ---
 
+## Ejecutar Benchmarks
+
+El runner automatico (`benchmark/runner.py`) orquesta todo el experimento:
+
+```bash
+pip install pyyaml          # dependencia unica del runner
+cd benchmark
+python runner.py            # ejecucion completa
+python runner.py --dry-run  # previsualizar sin ejecutar
+```
+
+### Que hace el runner:
+
+1. **Compila** cada lenguaje (C, Rust) si es necesario
+2. **Inicia** el servidor de cada lenguaje
+3. **Aleatoriza** el orden de experimentos usando la semilla configurada
+4. **Ejecuta k6** para cada combinacion (lenguaje x algoritmo x escenario x replica)
+5. **Genera** un CSV en `benchmark/results/` listo para ANOVA
+
+### ANOVA
+
+El CSV generado se carga directamente en R:
+
+```r
+df <- read.csv("benchmark/results/benchmark_YYYYMMDD_HHMMSS.csv")
+
+# ANOVA por algoritmo (cada algoritmo se analiza por separado)
+hash <- subset(df, algorithm == "hash")
+anova_hash <- aov(avg_latency_ms ~ language * scenario, data = hash)
+summary(anova_hash)
+TukeyHSD(anova_hash, "language")
+```
+
+Repite para `stringproc`, `prime` y `jsonproc`.
+
+### Ejecucion manual de un solo backend (opcional)
+
 ```bash
 cd benchmark
-k6 run -e LANG=python benchmark.js
-k6 run -e LANG=go benchmark.js
-k6 run -e LANG=c benchmark.js
-k6 run -e LANG=rust benchmark.js
+# Ejemplos para cada algoritmo:
+k6 run -e BASE_URL=http://127.0.0.1:8000 -e ENDPOINT=/hash-seq       -e PAYLOAD='{"text":"test","iterations":10000}'      --duration 30s --vus 10 benchmark.js
+k6 run -e BASE_URL=http://127.0.0.1:8000 -e ENDPOINT=/stringproc-seq -e PAYLOAD='{"text":"hello world"}'                  --duration 30s --vus 10 benchmark.js
+k6 run -e BASE_URL=http://127.0.0.1:8000 -e ENDPOINT=/prime-seq      -e PAYLOAD='{"limit":10000000}'                      --duration 30s --vus 10 benchmark.js
+k6 run -e BASE_URL=http://127.0.0.1:8000 -e ENDPOINT=/jsonproc-seq   -e PAYLOAD='{"count":5000,"nested":10}'             --duration 30s --vus 10 benchmark.js
+```
+
+### Configuracion del experimento
+
+Edita `benchmark/config.yaml` para ajustar replicas, semilla, carga de k6, y agregar nuevos algoritmos en el futuro.
 ```
 

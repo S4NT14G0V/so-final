@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <ctype.h>
 #include <pthread.h>
  
 #include <microhttpd.h>
@@ -39,7 +40,14 @@
 #define MIN_ITER      1
  
 /* Equivalente al asyncio.Lock() de Python */
-static pthread_mutex_t sequential_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t hash_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t stringproc_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t prime_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t jsonproc_lock = PTHREAD_MUTEX_INITIALIZER;
+
+#define MAX_LIMIT      100000000
+#define MAX_JSON_COUNT 50000
+#define MAX_JSON_NESTED 50
  
 /* -------------------------------------------------------------------------
  * Utilidades
@@ -81,6 +89,97 @@ static void compute_hash(const char *text, int iterations, char *out_hex)
     }
  
     bytes_to_hex(digest, SHA256_DIGEST_LENGTH, out_hex);
+}
+
+static void compute_string_proc(const char *text,
+                                 char *reversed, char *uppercase, int *vowel_count,
+                                 size_t text_len)
+{
+    for (size_t i = 0; i < text_len; i++) {
+        reversed[i] = text[text_len - 1 - i];
+        uppercase[i] = (char)toupper((unsigned char)text[i]);
+    }
+    reversed[text_len] = '\0';
+    uppercase[text_len] = '\0';
+
+    *vowel_count = 0;
+    for (size_t i = 0; i < text_len; i++) {
+        char c = (char)tolower((unsigned char)text[i]);
+        if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') {
+            (*vowel_count)++;
+        }
+    }
+}
+
+static void compute_prime(int limit, int *prime_count, int *largest_prime)
+{
+    uint8_t *sieve = calloc((size_t)limit + 1, 1);
+    if (!sieve) {
+        *prime_count = 0;
+        *largest_prime = 0;
+        return;
+    }
+    if (limit >= 2) sieve[2] = 1;
+    for (int i = 3; i <= limit; i += 2) sieve[i] = 1;
+
+    for (int i = 3; (long long)i * i <= limit; i += 2) {
+        if (sieve[i]) {
+            for (long long j = (long long)i * i; j <= limit; j += i) {
+                sieve[j] = 0;
+            }
+        }
+    }
+
+    *prime_count = (limit >= 2) ? 1 : 0;
+    *largest_prime = (limit >= 2) ? 2 : 0;
+    for (int i = 3; i <= limit; i += 2) {
+        if (sieve[i]) {
+            (*prime_count)++;
+            *largest_prime = i;
+        }
+    }
+    free(sieve);
+}
+
+static void compute_json_proc(int count, int nested,
+                               long *serialized_size, char *checksum)
+{
+    cJSON *root = cJSON_CreateArray();
+    for (int i = 0; i < count; i++) {
+        cJSON *inner = NULL;
+        for (int j = nested - 1; j >= 0; j--) {
+            char id_buf[64];
+            snprintf(id_buf, sizeof(id_buf), "item_%d_%d", i, j);
+            cJSON *obj = cJSON_CreateObject();
+            cJSON_AddStringToObject(obj, "id", id_buf);
+            cJSON_AddNumberToObject(obj, "value", i * nested + j);
+            if (inner) {
+                cJSON_AddItemToObject(obj, "inner", inner);
+            }
+            inner = obj;
+        }
+        char outer_buf[64];
+        snprintf(outer_buf, sizeof(outer_buf), "item_%d", i);
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "outer", outer_buf);
+        if (inner) {
+            cJSON_AddItemToObject(item, "inner", inner);
+        }
+        cJSON_AddItemToArray(root, item);
+    }
+
+    char *json_str = cJSON_PrintUnformatted(root);
+    *serialized_size = (long)strlen(json_str);
+
+    cJSON *parsed = cJSON_Parse(json_str);
+
+    uint8_t digest[SHA256_DIGEST_LENGTH];
+    SHA256((const uint8_t *)json_str, strlen(json_str), digest);
+    bytes_to_hex(digest, SHA256_DIGEST_LENGTH, checksum);
+
+    free(json_str);
+    if (parsed) cJSON_Delete(parsed);
+    cJSON_Delete(root);
 }
  
 /* -------------------------------------------------------------------------
@@ -258,9 +357,9 @@ static enum MHD_Result answer_to_connection(
  
                 if (is_seq) {
                     /* Equivalente a `async with _sequential_lock:` */
-                    pthread_mutex_lock(&sequential_lock);
+                    pthread_mutex_lock(&hash_lock);
                     compute_hash(text, iters, hash_hex);
-                    pthread_mutex_unlock(&sequential_lock);
+                    pthread_mutex_unlock(&hash_lock);
                 } else {
                     /* Sin lock: paralelo */
                     compute_hash(text, iters, hash_hex);
@@ -281,7 +380,178 @@ static enum MHD_Result answer_to_connection(
             }
             if (root) cJSON_Delete(root);
         }
- 
+
+    /* POST /stringproc-seq  o  POST /stringproc-conc */
+    } else if (strcmp(method, "POST") == 0 &&
+               (strcmp(url, "/stringproc-seq") == 0 || strcmp(url, "/stringproc-conc") == 0)) {
+
+        if (!rb->data || rb->size == 0) {
+            response = make_error_response("Body vacio", &http_status);
+        } else {
+            cJSON *root = cJSON_Parse(rb->data);
+            if (!root) {
+                response = make_error_response("JSON invalido", &http_status);
+            } else {
+                cJSON *j_text = cJSON_GetObjectItemCaseSensitive(root, "text");
+                if (!cJSON_IsString(j_text) || !j_text->valuestring || j_text->valuestring[0] == '\0') {
+                    response = make_error_response("Campo 'text' requerido", &http_status);
+                } else {
+                    const char *text = j_text->valuestring;
+                    size_t   text_len = strlen(text);
+                    int      is_seq   = (strcmp(url, "/stringproc-seq") == 0);
+
+                    char reversed[MAX_BODY_SIZE];
+                    char uppercase[MAX_BODY_SIZE];
+                    int  vowel_count;
+
+                    if (is_seq) {
+                        pthread_mutex_lock(&stringproc_lock);
+                        compute_string_proc(text, reversed, uppercase, &vowel_count, text_len);
+                        pthread_mutex_unlock(&stringproc_lock);
+                    } else {
+                        compute_string_proc(text, reversed, uppercase, &vowel_count, text_len);
+                    }
+
+                    cJSON *resp_json = cJSON_CreateObject();
+                    cJSON_AddStringToObject(resp_json, "mode", is_seq ? "sequential" : "concurrent");
+                    cJSON_AddStringToObject(resp_json, "original", text);
+                    cJSON_AddStringToObject(resp_json, "reversed", reversed);
+                    cJSON_AddStringToObject(resp_json, "uppercase", uppercase);
+                    cJSON_AddNumberToObject(resp_json, "vowel_count", vowel_count);
+
+                    char *json_str = cJSON_PrintUnformatted(resp_json);
+                    cJSON_Delete(resp_json);
+                    response = make_json_response(json_str, &http_status);
+                    free(json_str);
+                }
+                cJSON_Delete(root);
+            }
+        }
+
+    /* POST /prime-seq  o  POST /prime-conc */
+    } else if (strcmp(method, "POST") == 0 &&
+               (strcmp(url, "/prime-seq") == 0 || strcmp(url, "/prime-conc") == 0)) {
+
+        if (!rb->data || rb->size == 0) {
+            response = make_error_response("Body vacio", &http_status);
+        } else {
+            cJSON *root = cJSON_Parse(rb->data);
+            if (!root) {
+                response = make_error_response("JSON invalido", &http_status);
+            } else {
+                cJSON *j_limit = cJSON_GetObjectItemCaseSensitive(root, "limit");
+                int limit = 10000000;
+                if (j_limit) {
+                    if (!cJSON_IsNumber(j_limit)) {
+                        response = make_error_response("Campo 'limit' debe ser numero", &http_status);
+                    } else {
+                        limit = (int)j_limit->valuedouble;
+                        if (limit < 2 || limit > MAX_LIMIT) {
+                            char err[128];
+                            snprintf(err, sizeof(err), "limit debe estar entre 2 y %d", MAX_LIMIT);
+                            response = make_error_response(err, &http_status);
+                        }
+                    }
+                }
+                if (!response) {
+                    int is_seq = (strcmp(url, "/prime-seq") == 0);
+                    int prime_count, largest_prime;
+
+                    if (is_seq) {
+                        pthread_mutex_lock(&prime_lock);
+                        compute_prime(limit, &prime_count, &largest_prime);
+                        pthread_mutex_unlock(&prime_lock);
+                    } else {
+                        compute_prime(limit, &prime_count, &largest_prime);
+                    }
+
+                    cJSON *resp_json = cJSON_CreateObject();
+                    cJSON_AddStringToObject(resp_json, "mode", is_seq ? "sequential" : "concurrent");
+                    cJSON_AddNumberToObject(resp_json, "limit", limit);
+                    cJSON_AddNumberToObject(resp_json, "prime_count", prime_count);
+                    cJSON_AddNumberToObject(resp_json, "largest_prime", largest_prime);
+
+                    char *json_str = cJSON_PrintUnformatted(resp_json);
+                    cJSON_Delete(resp_json);
+                    response = make_json_response(json_str, &http_status);
+                    free(json_str);
+                }
+                cJSON_Delete(root);
+            }
+        }
+
+    /* POST /jsonproc-seq  o  POST /jsonproc-conc */
+    } else if (strcmp(method, "POST") == 0 &&
+               (strcmp(url, "/jsonproc-seq") == 0 || strcmp(url, "/jsonproc-conc") == 0)) {
+
+        if (!rb->data || rb->size == 0) {
+            response = make_error_response("Body vacio", &http_status);
+        } else {
+            cJSON *root = cJSON_Parse(rb->data);
+            if (!root) {
+                response = make_error_response("JSON invalido", &http_status);
+            } else {
+                cJSON *j_count  = cJSON_GetObjectItemCaseSensitive(root, "count");
+                cJSON *j_nested = cJSON_GetObjectItemCaseSensitive(root, "nested");
+
+                int count  = 5000;
+                int nested = 10;
+                int valid  = 1;
+
+                if (j_count) {
+                    if (!cJSON_IsNumber(j_count)) {
+                        response = make_error_response("Campo 'count' debe ser numero", &http_status);
+                        valid = 0;
+                    } else {
+                        count = (int)j_count->valuedouble;
+                        if (count < 1 || count > MAX_JSON_COUNT) {
+                            char err[128];
+                            snprintf(err, sizeof(err), "count debe estar entre 1 y %d", MAX_JSON_COUNT);
+                            response = make_error_response(err, &http_status);
+                            valid = 0;
+                        }
+                    }
+                }
+                if (valid && j_nested) {
+                    if (!cJSON_IsNumber(j_nested)) {
+                        response = make_error_response("Campo 'nested' debe ser numero", &http_status);
+                        valid = 0;
+                    } else {
+                        nested = (int)j_nested->valuedouble;
+                        if (nested < 0 || nested > MAX_JSON_NESTED) {
+                            response = make_error_response("nested debe estar entre 0 y 50", &http_status);
+                            valid = 0;
+                        }
+                    }
+                }
+
+                if (valid && !response) {
+                    int  is_seq = (strcmp(url, "/jsonproc-seq") == 0);
+                    long serialized_size;
+                    char checksum[SHA256_DIGEST_LENGTH * 2 + 1];
+
+                    if (is_seq) {
+                        pthread_mutex_lock(&jsonproc_lock);
+                        compute_json_proc(count, nested, &serialized_size, checksum);
+                        pthread_mutex_unlock(&jsonproc_lock);
+                    } else {
+                        compute_json_proc(count, nested, &serialized_size, checksum);
+                    }
+
+                    cJSON *resp_json = cJSON_CreateObject();
+                    cJSON_AddStringToObject(resp_json, "mode", is_seq ? "sequential" : "concurrent");
+                    cJSON_AddNumberToObject(resp_json, "serialized_bytes", (double)serialized_size);
+                    cJSON_AddStringToObject(resp_json, "checksum", checksum);
+
+                    char *json_str = cJSON_PrintUnformatted(resp_json);
+                    cJSON_Delete(resp_json);
+                    response = make_json_response(json_str, &http_status);
+                    free(json_str);
+                }
+                cJSON_Delete(root);
+            }
+        }
+
     /* 404 para cualquier otra ruta */
     } else {
         http_status = MHD_HTTP_NOT_FOUND;
@@ -331,10 +601,16 @@ int main(void)
         return 1;
     }
  
-    printf("Hashing Benchmark – C\n");
+    printf("Benchmark Backend – C (multi-algoritmo)\n");
     printf("Escuchando en http://0.0.0.0:%d\n", PORT);
-    printf("  POST /hash-seq   (secuencial)\n");
-    printf("  POST /hash-conc  (concurrente)\n");
+    printf("  POST /hash-seq        (secuencial)\n");
+    printf("  POST /hash-conc       (concurrente)\n");
+    printf("  POST /stringproc-seq  (secuencial)\n");
+    printf("  POST /stringproc-conc (concurrente)\n");
+    printf("  POST /prime-seq       (secuencial)\n");
+    printf("  POST /prime-conc      (concurrente)\n");
+    printf("  POST /jsonproc-seq    (secuencial)\n");
+    printf("  POST /jsonproc-conc   (concurrente)\n");
     printf("  GET  /health\n");
     printf("Ctrl+C para detener.\n\n");
  
