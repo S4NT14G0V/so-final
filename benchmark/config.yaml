@@ -8,13 +8,14 @@
 # Factores del disenio:
 #   - language (python, go, c, rust)
 #   - scenario (seq, conc)
+#   - vus (niveles de concurrencia simultanea)
 #   - replica (anidado)
 # =============================================================================
 
 experiment:
   replicas: 1
   seed: 26
-  k6_vus: 10
+  k6_vus: [10, 50]
   k6_duration: "30s"
 
 languages:

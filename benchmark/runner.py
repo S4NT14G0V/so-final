@@ -147,11 +147,16 @@ class BenchmarkRunner:
         n_langs = len(self.config["languages"])
         n_algos = len(self.config["algorithms"])
         n_replicas = self.config["experiment"]["replicas"]
+        vus_values = self.config["experiment"]["k6_vus"]
+        if not isinstance(vus_values, list):
+            vus_values = [vus_values]
+        n_vus = len(vus_values)
 
         print(f"Experimento: {n_langs} lenguajes x {n_algos} algoritmos x "
-              f"2 escenarios x {n_replicas} replicas")
+              f"2 escenarios x {n_vus} VUs x {n_replicas} replicas")
         print(f"Total: {total} ejecuciones de k6 (orden completamente aleatorio)")
         print(f"Semilla: {self.config['experiment']['seed']}")
+        print(f"Niveles VUs: {vus_values}")
         print(f"CSV: {csv_path}")
         print()
 
@@ -190,7 +195,8 @@ class BenchmarkRunner:
                         break
 
                     progress = f"[{idx + 1:>{len(str(total))}}/{total}]"
-                    label = f"{exp['language']} | {exp['algorithm']} | {exp['scenario']} | rep {exp['replica']}"
+                    label = (f"VUs={exp['vus']} | {exp['language']} | {exp['algorithm']} | "
+                             f"{exp['scenario']} | rep {exp['replica']}")
                     print(f"  {progress} {label}  ", end="", flush=True)
 
                     try:
@@ -206,8 +212,8 @@ class BenchmarkRunner:
                         "scenario": exp["scenario"],
                         "replica": exp["replica"],
                         "seed": self.config["experiment"]["seed"],
-                        "vus": self.config["experiment"]["k6_vus"],
-                        "duration": self.config["experiment"]["k6_duration"],
+                        "vus": exp["vus"],
+                        "duration": exp["duration"],
                         **result,
                     }
                     writer.writerow(row)
@@ -326,8 +332,8 @@ class BenchmarkRunner:
             "-e", f"ENDPOINT={endpoint}",
             "-e", f"PAYLOAD={payload}",
             "--summary-export", str(summary_file),
-            "--duration", self.config["experiment"]["k6_duration"],
-            "--vus", str(self.config["experiment"]["k6_vus"]),
+            "--duration", exp["duration"],
+            "--vus", str(exp["vus"]),
             "--no-color",
             str(self.benchmark_js),
         ]
@@ -362,21 +368,29 @@ class BenchmarkRunner:
     def _build_experiment_block(self) -> List[Dict[str, Any]]:
         """
         Retorna una lista plana con todos los experimentos (todos los lenguajes,
-        algoritmos, escenarios y replicas) completamente mezclada.
+        algoritmos, escenarios, niveles de VUs y replicas) completamente mezclada.
         """
         experiments: List[Dict[str, Any]] = []
+
+        vus_values = self.config["experiment"]["k6_vus"]
+        if not isinstance(vus_values, list):
+            vus_values = [vus_values]
+        duration = self.config["experiment"]["k6_duration"]
 
         for lang in self.config["languages"]:
             for algo in self.config["algorithms"]:
                 for scenario in ("seq", "conc"):
-                    for replica in range(1, self.config["experiment"]["replicas"] + 1):
-                        experiments.append({
-                            "language": lang["name"],
-                            "port": lang["port"],
-                            "algorithm": algo["name"],
-                            "scenario": scenario,
-                            "replica": replica,
-                        })
+                    for vus in vus_values:
+                        for replica in range(1, self.config["experiment"]["replicas"] + 1):
+                            experiments.append({
+                                "language": lang["name"],
+                                "port": lang["port"],
+                                "algorithm": algo["name"],
+                                "scenario": scenario,
+                                "vus": vus,
+                                "duration": duration,
+                                "replica": replica,
+                            })
 
         rng = random.Random(self.config["experiment"]["seed"])
         rng.shuffle(experiments)
@@ -410,7 +424,8 @@ class BenchmarkRunner:
         print(f"  Orden completamente aleatorio (seed={self.config['experiment']['seed']})")
         print()
         for exp in experiments[:15]:
-            print(f"    {exp['language']:6s} | {exp['algorithm']:10s} | {exp['scenario']:4s} | rep {exp['replica']}")
+            print(f"    VUs={exp['vus']:<4d} | {exp['language']:6s} | {exp['algorithm']:10s} | "
+                  f"{exp['scenario']:4s} | rep {exp['replica']}")
         if len(experiments) > 15:
             print(f"    ... y {len(experiments) - 15} mas")
         print()
