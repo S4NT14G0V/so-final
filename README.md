@@ -68,6 +68,8 @@ Cada algoritmo tiene dos modos: `-seq` (secuencial, con lock) y `-conc` (concurr
 ### Python
 ```bash
 cd python
+python -m venv .venv
+source .venv/bin/activate   # Linux/Kali
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
@@ -104,8 +106,10 @@ cargo build --release
 El runner automatico (`benchmark/runner.py`) orquesta todo el experimento:
 
 ```bash
-pip install pyyaml          # dependencia unica del runner
 cd benchmark
+python -m venv .venv
+source .venv/bin/activate   # Linux/Kali
+pip install -r requirements.txt
 python runner.py            # ejecucion completa
 python runner.py --dry-run  # previsualizar sin ejecutar
 ```
