@@ -8,3 +8,6 @@ RESUMEN.md
 benchmark/lib
 benchmark/include
 benchmark/.tmp
+benchmark/results/analisis_vus_test
+benchmark/results/analisis_20260608_131831
+benchmark/results/analisis_20260608_145829

@@ -2,13 +2,14 @@
 """
 Analisis estadistico ANOVA de resultados de benchmark
 =====================================================
-Realiza un ANOVA de 3 factores (Algoritmo x Variante x Lenguaje)
+Realiza un ANOVA de 4 factores (Algoritmo x Variante x Lenguaje x VUs)
 sobre el CSV generado por runner.py.
 
 Factores:
   - algorithm  (hash, stringproc, prime, jsonproc)
   - scenario   (seq, conc) -> "variante"
   - language   (python, go, c, rust)
+  - vus        (niveles de concurrencia simultanea)
 
 Uso:
   python analysis.py --csv benchmark/results/benchmark_*.csv
@@ -61,6 +62,7 @@ def load_data(csv_path: str) -> pd.DataFrame:
     df["variante"]  = df["scenario"].cat.rename_categories(
         {"seq": "secuencial", "conc": "concurrente"}
     )
+    df["vus"] = df["vus"].astype("category")
     return df
 
 
@@ -70,13 +72,32 @@ def load_data(csv_path: str) -> pd.DataFrame:
 
 
 def run_anova(df: pd.DataFrame, metric: str = "avg_ms"):
-    formula = f"{metric} ~ C(language) * C(variante) * C(algorithm)"
+    n_vus_levels = df["vus"].nunique()
+
+    if n_vus_levels > 1:
+        formula = f"{metric} ~ C(language) * C(variante) * C(algorithm) * C(vus)"
+    else:
+        formula = f"{metric} ~ C(language) * C(variante) * C(algorithm)"
+
     model = ols(formula, data=df).fit()
 
     if model.df_resid <= 0:
-        print("  [!] Sin suficientes replicas para el modelo completo con interacciones.")
-        print("  [!] Ajustando modelo solo con efectos principales...")
-        formula = f"{metric} ~ C(language) + C(variante) + C(algorithm)"
+        if n_vus_levels > 1:
+            print("  [!] Sin suficientes replicas para el modelo completo (4 factores con interacciones).")
+            print("  [!] Ajustando modelo solo con efectos principales + interaccion variante:vus...")
+            formula = f"{metric} ~ C(language) + C(variante) + C(algorithm) + C(vus) + C(variante):C(vus)"
+        else:
+            print("  [!] Sin suficientes replicas para el modelo completo con interacciones.")
+            print("  [!] Ajustando modelo solo con efectos principales...")
+            formula = f"{metric} ~ C(language) + C(variante) + C(algorithm)"
+        model = ols(formula, data=df).fit()
+
+    if model.df_resid <= 0:
+        if n_vus_levels > 1:
+            print("  [!] Aun sin replicas suficientes. Ajustando solo efectos principales...")
+            formula = f"{metric} ~ C(language) + C(variante) + C(algorithm) + C(vus)"
+        else:
+            formula = f"{metric} ~ C(language) + C(variante) + C(algorithm)"
         model = ols(formula, data=df).fit()
 
     if model.df_resid <= 0:
@@ -94,7 +115,7 @@ def print_anova(anova: pd.DataFrame) -> None:
         print("\n  No se pudo calcular la tabla ANOVA (replicas insuficientes).\n")
         return
     print(f"\n{'='*70}")
-    print(f"  ANOVA DE 3 FACTORES (Type II)")
+    print(f"  ANOVA DE 4 FACTORES (Type II)")
     print(f"{'='*70}\n")
     print(f"{'Fuente':<45s} {'SS':>12s} {'df':>5s} {'F':>10s} {'p-valor':>10s}")
     print("-" * 85)
@@ -124,7 +145,7 @@ def run_tukey(df: pd.DataFrame, metric: str, factor: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def plot_interaction(df: pd.DataFrame, metric: str) -> plt.Figure:
+def plot_interaction_lang_algo(df: pd.DataFrame, metric: str) -> plt.Figure:
     """Interaction plot: Language x Algorithm (para ver si el ranking depende del algoritmo)."""
     data = df.groupby(["language", "algorithm"], observed=True)[metric].agg(
         ["mean", "sem"]
@@ -148,6 +169,38 @@ def plot_interaction(df: pd.DataFrame, metric: str) -> plt.Figure:
     ax.set_ylabel(f"{metric}")
     ax.set_title(f"Interaccion Lenguaje x Algoritmo\nVariable: {metric}")
     ax.legend(title="Algoritmo")
+    return fig
+
+
+def plot_interaction_variante_vus(df: pd.DataFrame, metric: str) -> plt.Figure:
+    """Interaction plot: Variante x VUs (clave para evaluar si la ventaja
+    de concurrencia crece al aumentar la carga simultanea)."""
+    data = df.groupby(["variante", "vus"], observed=True)[metric].agg(
+        ["mean", "sem"]
+    ).reset_index()
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for var in data["variante"].cat.categories:
+        subset = data[data["variante"] == var]
+        vus_order = sorted(subset["vus"].cat.categories, key=lambda x: int(x))
+        x_pos = range(len(vus_order))
+        means = [subset[subset["vus"] == v]["mean"].values[0] for v in vus_order]
+        sems = [subset[subset["vus"] == v]["sem"].values[0] for v in vus_order]
+        ax.errorbar(
+            x=x_pos,
+            y=means,
+            yerr=[1.96 * s for s in sems],
+            label=var,
+            marker="o",
+            capsize=4,
+            linewidth=2,
+        )
+    ax.set_xticks(range(len(vus_order)))
+    ax.set_xticklabels(vus_order)
+    ax.set_xlabel("VUs (Usuarios Virtuales)")
+    ax.set_ylabel(f"{metric}")
+    ax.set_title(f"Interaccion Variante x VUs (hipotesis clave)\nVariable: {metric}")
+    ax.legend(title="Variante")
     return fig
 
 
@@ -186,23 +239,28 @@ def plot_anova_diagnostics(model, output_path: str):
 
 
 def plot_boxplots(df: pd.DataFrame, metric: str, output_dir: str):
-    """Boxplots agrupados por los 3 factores."""
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    """Boxplots agrupados por los 4 factores."""
+    fig, axes = plt.subplots(2, 2, figsize=(18, 14))
 
-    sns.boxplot(data=df, x="language", y=metric, hue="algorithm", ax=axes[0])
-    axes[0].set_title(f"{metric} por Lenguaje y Algoritmo")
-    axes[0].set_xlabel("Lenguaje")
-    axes[0].legend(title="Algoritmo", loc="upper left")
+    sns.boxplot(data=df, x="language", y=metric, hue="algorithm", ax=axes[0, 0])
+    axes[0, 0].set_title(f"{metric} por Lenguaje y Algoritmo")
+    axes[0, 0].set_xlabel("Lenguaje")
+    axes[0, 0].legend(title="Algoritmo", loc="upper left")
 
-    sns.boxplot(data=df, x="language", y=metric, hue="variante", ax=axes[1])
-    axes[1].set_title(f"{metric} por Lenguaje y Variante")
-    axes[1].set_xlabel("Lenguaje")
-    axes[1].legend(title="Variante")
+    sns.boxplot(data=df, x="language", y=metric, hue="variante", ax=axes[0, 1])
+    axes[0, 1].set_title(f"{metric} por Lenguaje y Variante")
+    axes[0, 1].set_xlabel("Lenguaje")
+    axes[0, 1].legend(title="Variante")
 
-    sns.boxplot(data=df, x="algorithm", y=metric, hue="variante", ax=axes[2])
-    axes[2].set_title(f"{metric} por Algoritmo y Variante")
-    axes[2].set_xlabel("Algoritmo")
-    axes[2].legend(title="Variante")
+    sns.boxplot(data=df, x="algorithm", y=metric, hue="variante", ax=axes[1, 0])
+    axes[1, 0].set_title(f"{metric} por Algoritmo y Variante")
+    axes[1, 0].set_xlabel("Algoritmo")
+    axes[1, 0].legend(title="Variante")
+
+    sns.boxplot(data=df, x="variante", y=metric, hue="vus", ax=axes[1, 1])
+    axes[1, 1].set_title(f"{metric} por Variante y VUs\n(interaccion clave para la hipotesis)")
+    axes[1, 1].set_xlabel("Variante")
+    axes[1, 1].legend(title="VUs")
 
     plt.tight_layout()
     path = os.path.join(output_dir, "boxplots.png")
@@ -285,6 +343,7 @@ def generate_report(output_dir: str, df: pd.DataFrame, metric: str,
     lines.append(f"Lenguajes: {', '.join(sorted(df['language'].unique()))}")
     lines.append(f"Algoritmos: {', '.join(sorted(df['algorithm'].unique()))}")
     lines.append(f"Variantes: {', '.join(sorted(df['variante'].unique()))}")
+    lines.append(f"Niveles VUs: {', '.join(str(v) for v in sorted(df['vus'].unique(), key=lambda x: int(x)))}")
     lines.append(f"")
 
     # Estadisticas descriptivas
@@ -292,14 +351,14 @@ def generate_report(output_dir: str, df: pd.DataFrame, metric: str,
     lines.append("  ESTADISTICAS DESCRIPTIVAS")
     lines.append("-" * 70)
     desc = df.groupby(
-        ["language", "algorithm", "variante"], observed=True
+        ["language", "algorithm", "variante", "vus"], observed=True
     )[metric].describe()
     lines.append(desc.to_string())
     lines.append(f"")
 
     # ANOVA
     lines.append("-" * 70)
-    lines.append("  ANOVA DE 3 FACTORES")
+    lines.append("  ANOVA DE 4 FACTORES")
     lines.append("-" * 70)
     lines.append(anova.to_string())
     lines.append(f"")
@@ -349,8 +408,9 @@ def generate_sample_data(output_path: str) -> str:
     algorithms = ["hash", "stringproc", "prime", "jsonproc"]
     languages = ["python", "go", "c", "rust"]
     scenarios = ["seq", "conc"]
-    replicas = 10
-    n_obs = len(algorithms) * len(languages) * len(scenarios) * replicas
+    vus_levels = [1, 10, 50, 100]
+    replicas = 5
+    n_obs = len(algorithms) * len(languages) * len(scenarios) * len(vus_levels) * replicas
 
     # Latencia base por algoritmo (diferentes escalas)
     base_latency = {
@@ -374,50 +434,59 @@ def generate_sample_data(output_path: str) -> str:
         "c": 0.05,
     }
 
+    # Factor de congestion por VUs: a mayor VUs, mayor latencia (especialmente en seq)
+    vus_congestion = {1: 1.0, 10: 1.05, 50: 1.2, 100: 1.4}
+
     rows = []
     for algo in algorithms:
         for lang in languages:
             for scen in scenarios:
-                base = base_latency[algo]
-                penalty_factor = lang_penalty[lang]
-                scen_factor = scenario_penalty[scen]
-                seq_extra = lock_overhead[lang] if scen == "seq" else 0
+                for vus in vus_levels:
+                    base = base_latency[algo]
+                    penalty_factor = lang_penalty[lang]
+                    scen_factor = scenario_penalty[scen]
+                    seq_extra = lock_overhead[lang] if scen == "seq" else 0
+                    vus_factor = vus_congestion[vus]
+                    # El lock penaliza mas a VUs altos (interaccion scen * vus)
+                    vus_seq_extra = (vus_factor - 1.0) * 2.0 if scen == "seq" else 0
 
-                # Latencia esperada = base * lang * scen + interaccion
-                expected = base * penalty_factor * scen_factor + seq_extra * base * 0.3
+                    # Latencia esperada
+                    expected = (base * penalty_factor * scen_factor * vus_factor
+                                + seq_extra * base * 0.3
+                                + vus_seq_extra * base * 0.1)
 
-                for rep in range(1, replicas + 1):
-                    # Ruido normal (proporcional a la base)
-                    noise = np.random.normal(0, base * 0.08)
-                    # Ruido multiplicativo (variabilidad relativa)
-                    mult_noise = np.random.lognormal(0, 0.12) - 0.06
-                    latency = max(0.1, expected * mult_noise + noise)
+                    for rep in range(1, replicas + 1):
+                        # Ruido normal (proporcional a la base)
+                        noise = np.random.normal(0, base * 0.08)
+                        # Ruido multiplicativo (variabilidad relativa)
+                        mult_noise = np.random.lognormal(0, 0.12) - 0.06
+                        latency = max(0.1, expected * mult_noise + noise)
 
-                    # throughput approx ~ 1000/latency (simulado)
-                    throughput = 1000 / latency * (1 + np.random.normal(0, 0.05))
+                        # throughput approx ~ 1000/latency (simulado)
+                        throughput = 1000 / latency * (1 + np.random.normal(0, 0.05))
 
-                    error_rate = max(0, min(0.05, np.random.exponential(0.002)))
+                        error_rate = max(0, min(0.05, np.random.exponential(0.002)))
 
-                    rows.append({
-                        "timestamp": datetime.now().isoformat(),
-                        "language": lang,
-                        "algorithm": algo,
-                        "scenario": scen,
-                        "replica": rep,
-                        "seed": 42,
-                        "vus": 10,
-                        "duration": "30s",
-                        "sample_size": int(30 * (1000 / latency)),
-                        "avg_ms": round(latency, 2),
-                        "min_ms": round(latency * 0.7, 2),
-                        "max_ms": round(latency * 1.4, 2),
-                        "p50_ms": round(latency * 0.95, 2),
-                        "p90_ms": round(latency * 1.25, 2),
-                        "p95_ms": round(latency * 1.35, 2),
-                        "p99_ms": round(latency * 1.5, 2),
-                        "error_rate": round(error_rate, 6),
-                        "throughput_rps": round(throughput, 2),
-                    })
+                        rows.append({
+                            "timestamp": datetime.now().isoformat(),
+                            "language": lang,
+                            "algorithm": algo,
+                            "scenario": scen,
+                            "replica": rep,
+                            "seed": 42,
+                            "vus": vus,
+                            "duration": "30s",
+                            "sample_size": int(30 * (1000 / latency)),
+                            "avg_ms": round(latency, 2),
+                            "min_ms": round(latency * 0.7, 2),
+                            "max_ms": round(latency * 1.4, 2),
+                            "p50_ms": round(latency * 0.95, 2),
+                            "p90_ms": round(latency * 1.25, 2),
+                            "p95_ms": round(latency * 1.35, 2),
+                            "p99_ms": round(latency * 1.5, 2),
+                            "error_rate": round(error_rate, 6),
+                            "throughput_rps": round(throughput, 2),
+                        })
 
     df = pd.DataFrame(rows)
     df.to_csv(output_path, index=False)
@@ -432,7 +501,7 @@ def generate_sample_data(output_path: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ANOVA de 3 factores sobre resultados de benchmark"
+        description="ANOVA de 4 factores sobre resultados de benchmark"
     )
     parser.add_argument(
         "--csv",
@@ -485,6 +554,7 @@ def main():
     print(f"  Lenguajes: {list(df['language'].cat.categories)}")
     print(f"  Algoritmos: {list(df['algorithm'].cat.categories)}")
     print(f"  Variantes: {list(df['scenario'].cat.categories)}")
+    print(f"  VUs: {list(df['vus'].cat.categories)}")
     print(f"  Replicas: {df['replica'].max()}")
 
     # --- Preparar directorio de salida ---
@@ -505,7 +575,7 @@ def main():
     print_anova(anova)
 
     # --- Post-hoc ---
-    for factor in ["language", "variante", "algorithm"]:
+    for factor in ["language", "variante", "algorithm", "vus"]:
         try:
             print(run_tukey(df, metric, factor))
         except Exception as e:
@@ -518,11 +588,16 @@ def main():
     plot_boxplots(df, metric, output_dir)
     print(f"  boxplots.png")
 
-    # Interaction plot
-    fig = plot_interaction(df, metric)
+    # Interaction plots
+    fig = plot_interaction_lang_algo(df, metric)
     fig.savefig(os.path.join(output_dir, "interaction_plot.png"))
     plt.close(fig)
     print(f"  interaction_plot.png")
+
+    fig = plot_interaction_variante_vus(df, metric)
+    fig.savefig(os.path.join(output_dir, "interaction_variante_vus.png"))
+    plt.close(fig)
+    print(f"  interaction_variante_vus.png")
 
     # Diagnostico de residuales
     plot_anova_diagnostics(model, os.path.join(output_dir, "diagnostics.png"))
